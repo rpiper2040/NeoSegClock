@@ -892,6 +892,7 @@ void setup() {
     Serial.print(".");
   }
   Serial.printf("✓ Wi-Fi connected. IP address: %s\n", WiFi.localIP().toString().c_str());
+  //mDNS
   if (MDNS.begin(MDNS_NAME)) {
    Serial.print("✓ mDNS responder started: http://");
    Serial.print(MDNS_NAME);
@@ -899,11 +900,12 @@ void setup() {
   } else {
     Serial.println("⚠ Failed to start mDNS responder");
   }
-  WebSerial.begin(&server, "/");
+  //WebSerialLite
+  WebSerial.begin(&server);
   WebSerial.onMessage(onWebSerialInput);  // Set up callback function
-
-  ArduinoOTA.setHostname(MDNS_NAME); // Optional: use same MDNS as WebSerial
-  ArduinoOTA.setPassword(OTA_PASS);  // <-- your password
+//ArduinoOTA
+  ArduinoOTA.setHostname(MDNS_NAME);
+  ArduinoOTA.setPassword(OTA_PASS); 
   ArduinoOTA
     .onStart([]() {
       String type;
@@ -955,7 +957,7 @@ server.on("/api", HTTP_GET, [](AsyncWebServerRequest *request) {
     return;
   }
 });
-server.on("/test", HTTP_GET, [](AsyncWebServerRequest *request) {
+server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
   request->send_P(200, "text/html", index_html);
 });
 
