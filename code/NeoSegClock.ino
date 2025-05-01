@@ -1,14 +1,12 @@
 /*
 to add:
-ap mode
-api - settings, factory, reset,
-web interface
+api - factory reset
+web interface - settings
 audio -dfplayermini?
 temp/humidity? via button?
 color patterns?
 */
-#define NEOSEGCLOCK_VERSION 6.2 //working on api
-//added route with a few cmds added list handle that returns
+#define NEOSEGCLOCK_VERSION 6.4 //working on AP
 #include <Wire.h>
 #include <RTClib.h>
 #include <Adafruit_NeoPixel.h>
@@ -41,6 +39,7 @@ color patterns?
 #define MDNS_NAME           "NeoSegClock"
 #define OTA_PASS            "1234"
 #define SETTINGS_VERSION 1
+
 // —————— Time Sync Constants ——————
 const char*        ntpServer       = "pool.ntp.org";
 const long         gmtOffset_sec   = 0;
@@ -884,28 +883,58 @@ void setup() {
     Serial.println("RTC not found; continuing without it.");
   }
 
-  // 2) Wi-Fi connect
-  Serial.print("Connecting Wi-Fi");
+
+  // 2) Wi-Fi connect with AP fallback
+  Serial.print("Connecting to Wi-Fi");
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  int attempts = 0;
+  const int maxAttempts = 20; // Try for ~10 seconds (20 * 500ms)
+  bool wifiConnected = false;
+
+  while (attempts < maxAttempts && WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
-  Serial.printf("✓ Wi-Fi connected. IP address: %s\n", WiFi.localIP().toString().c_str());
-  //mDNS
-  if (MDNS.begin(MDNS_NAME)) {
-   Serial.print("✓ mDNS responder started: http://");
-   Serial.print(MDNS_NAME);
-   Serial.println(".local");
+
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnected = true;
+    Serial.printf("✓ Wi-Fi connected. IP address: %s\n", WiFi.localIP().toString().c_str());
   } else {
-    Serial.println("⚠ Failed to start mDNS responder");
+    Serial.println("\n✗ Wi-Fi connection failed. Starting AP mode...");
+    // Configure AP mode
+    const char* apSSID = "NeoSegClock-AP";
+    const char* apPassword = "12345678"; // Use a secure password
+    WiFi.softAP(apSSID, apPassword);
+    Serial.printf("✓ AP mode started. SSID: %s, IP address: %s\n", apSSID, WiFi.softAPIP().toString().c_str());
   }
-  //WebSerialLite
+
+ /* // mDNS (optional: only in STA mode, as mDNS may not work reliably in AP mode)
+  if (wifiConnected && MDNS.begin(MDNS_NAME)) {
+    Serial.print("✓ mDNS responder started: http://");
+    Serial.print(MDNS_NAME);
+    Serial.println(".local");
+  } else {
+    Serial.println("⚠ mDNS responder not started (skipped in AP mode or failed)");
+  }*/
+// mDNS
+if (MDNS.begin(MDNS_NAME)) {
+  Serial.print("✓ mDNS responder started: http://");
+  Serial.print(MDNS_NAME);
+  Serial.println(wifiConnected ? ".local (STA mode)" : ".local (AP mode)");
+  MDNS.addService("http", "tcp", 80); // Web server
+  MDNS.addService("arduino", "tcp", 3232); // OTA
+} else {
+  Serial.println("⚠ Failed to start mDNS responder");
+}
+
+  // WebSerialLite
   WebSerial.begin(&server);
   WebSerial.onMessage(onWebSerialInput);  // Set up callback function
-//ArduinoOTA
-  ArduinoOTA.setHostname(MDNS_NAME);
-  ArduinoOTA.setPassword(OTA_PASS); 
+
+  // ArduinoOTA
+  ArduinoOTA.setHostname(MDNS_NAME); // Optional: use same MDNS as WebSerial
+  ArduinoOTA.setPassword(OTA_PASS);  // <-- your password
   ArduinoOTA
     .onStart([]() {
       String type;
@@ -917,49 +946,49 @@ void setup() {
       Serial.println("\nUpdate complete");
     })
     .onProgress([](unsigned int progress, unsigned int total) {
-     Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
     })
     .onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
+      Serial.printf("Error[%u]: ", error);
       if      (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
       else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
       else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
       else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-     else if (error == OTA_END_ERROR) Serial.println("End Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
     });
   ArduinoOTA.begin();
   Serial.println("✓ Arduino OTA Ready");
-  server.begin();            // Start the web server
 
+  // Start web server (works in both STA and AP mode)
+  server.begin();
+  Serial.println("✓ Web server started");
 
-
-
-//add here the /api route??
-server.on("/api", HTTP_GET, [](AsyncWebServerRequest *request) {
-  if (!request->hasParam("cmd")) {
-    request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing cmd parameter\"}");
-    return;
-  }
-  String cmd = request->getParam("cmd")->value();
-  if (cmd == "list") apiList(request);
-  else if (cmd == "add") apiAdd(request);
-  else if (cmd == "remove") apiRemove(request);
-  else if (cmd == "edit") apiEdit(request);
-  else if (cmd == "getColor") apiGetColor(request);
-  else if (cmd == "setColor") apiSetColor(request);
-  else if (cmd == "getTime") apiGetTime(request);
-  else if (cmd == "setTime") apiSetTime(request);
-  else if (cmd == "getSettings") apiGetSettings(request);
-  else if (cmd == "setSettings") apiSetSettings(request);
-  else if (cmd == "reset")  ESP.restart();
-  else {
-    request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Unknown command\"}");
-    return;
-  }
-});
-server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-  request->send_P(200, "text/html", index_html);
-});
+  // Add API and root routes
+  server.on("/api", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!request->hasParam("cmd")) {
+      request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing cmd parameter\"}");
+      return;
+    }
+    String cmd = request->getParam("cmd")->value();
+    if (cmd == "list") apiList(request);
+    else if (cmd == "add") apiAdd(request);
+    else if (cmd == "remove") apiRemove(request);
+    else if (cmd == "edit") apiEdit(request);
+    else if (cmd == "getColor") apiGetColor(request);
+    else if (cmd == "setColor") apiSetColor(request);
+    else if (cmd == "getTime") apiGetTime(request);
+    else if (cmd == "setTime") apiSetTime(request);
+    else if (cmd == "getSettings") apiGetSettings(request);
+    else if (cmd == "setSettings") apiSetSettings(request);
+    else if (cmd == "reset") ESP.restart();
+    else {
+      request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Unknown command\"}");
+      return;
+    }
+  });
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send_P(200, "text/html", index_html);
+  });
 
   // 3) Time system init
   setupTimeSystem();
@@ -975,7 +1004,7 @@ server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
   segs.registerSymbol(';', 2, false);
   segs.registerSymbol('.', 1, true);
 
-  SerialPrintln("Welcome to NeoSegClock! Enter '?' for commands.");
+  Serial.println("Welcome to NeoSegClock! Enter '?' for commands.");
 }
 
 // —————— Main Loop ——————
