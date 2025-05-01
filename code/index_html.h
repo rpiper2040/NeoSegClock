@@ -443,7 +443,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         async function setRGB(event) {
             event.preventDefault();
             const rgb = document.getElementById('new-rgb').value;
-            //const rgbNoHash = rgb.replace('#', '');
+            const rgbNoHash = rgb.replace('#', '');
             const url = `/api?cmd=setColor&color=${rgbNoHash}`;
             
             try {
@@ -565,7 +565,6 @@ const char index_html[] PROGMEM = R"rawliteral(
                 }
             } else {
                 timeInput.disabled = false;
-景观
                 colorInput.disabled = false;
                 toneSelect.disabled = false;
                 button.textContent = 'Save';
